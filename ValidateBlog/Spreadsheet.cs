@@ -13,10 +13,9 @@ using System.IO;
 namespace ValidateBlog {
     class SheetAccessor : IDisposable {
         Excel.Application App = null;
-        Excel.Workbooks Workbooks = null;
         Excel.Workbook Workbook = null;
-        Excel.Sheets AllSheets = null;
         Excel.Worksheet Sheet = null;
+        object[,] SheetData;
 
         public int Row; // Current row of interest
 
@@ -25,19 +24,42 @@ namespace ValidateBlog {
             App = new Excel.Application();
             // Stupid Excel requires an absolute path for this
             string workbookName = Directory.GetCurrentDirectory() + fileName;
-            Workbooks = App.Workbooks;
-            Workbook = Workbooks.Open(workbookName, 3, false, 5, "", "", false,
-                Excel.XlPlatform.xlWindows, "", true, false, 0, true, false, false);
+            App.DisplayAlerts = false; // No stupid dialog boxes!
+            Workbook = App.Workbooks.Open(Filename: workbookName, UpdateLinks: 3, ReadOnly: true);
 
             // Just get the single sheet we want; the one labeled "stories"
-            AllSheets = Workbook.Worksheets;
-            Sheet = AllSheets[sheetName];
+            Sheet = Workbook.Worksheets[sheetName];
+
+            SheetData = Sheet.UsedRange.Value2;
+            Sheet = null;
+            if (Workbook != null) {
+                Workbook.Close();
+                Marshal.FinalReleaseComObject(Workbook);
+            }
+            Workbook = null;
+            if (App != null) {
+                App.Quit();
+                Marshal.FinalReleaseComObject(App);
+                App = null;
+            }
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
         }
 
+        // No reason to compute this more than once.
+        int ValueOfA = Convert.ToInt32('A');
         // Extract a single value from the current row
         public string GetCell(string col) {
-            Excel.Range range = (Excel.Range)Sheet.Cells[Row, col];
-            object val = range.Value2;
+            int colIndex = Convert.ToInt32(col[0]) - ValueOfA;
+            if (col.Length == 2) {
+                colIndex *= 26;
+                colIndex += Convert.ToInt32(col[1]) - ValueOfA + 26; // Starts after 26 1-char labels
+            }
+            colIndex += 1; // Excel indexes from 1, not 0
+
+            // Excel.Range range = (Excel.Range)Sheet.Cells[Row, col];
+            // object val = range.Value2;
+            object val = SheetData[Row, colIndex];
             if (val == null) {
                 return null;
             }
@@ -63,20 +85,12 @@ namespace ValidateBlog {
         protected virtual void Dispose(bool disposing) {
             if (!isDisposed) {
                 if (disposing) {
-                    if (Sheet != null) Marshal.FinalReleaseComObject(Sheet);
                     Sheet = null;
-                    if (AllSheets != null) Marshal.FinalReleaseComObject(AllSheets);
-                    AllSheets = null;
                     if (Workbook != null) {
-                        Workbook.Close(false, 0, 0);
+                        Workbook.Close();
                         Marshal.FinalReleaseComObject(Workbook);
                     }
                     Workbook = null;
-                    if (Workbooks != null) {
-                        Workbooks.Close();
-                        Marshal.FinalReleaseComObject(Workbooks);
-                    }
-                    Workbooks = null;
                     if (App != null) {
                         App.Quit();
                         Marshal.FinalReleaseComObject(App);
