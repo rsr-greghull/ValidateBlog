@@ -11,43 +11,48 @@ using System.IO;
 // https://stackoverflow.com/questions/14051257/conversion-from-int-array-to-string-array to convert array of objects to strings
 
 namespace ValidateBlog {
-    class SheetAccessor : IDisposable {
-        Excel.Application App = null;
-        Excel.Workbook Workbook = null;
-        Excel.Worksheet Sheet = null;
+    class SheetAccessor {
         object[,] SheetData;
-
+        public int LastRow => SheetData.GetUpperBound(0); // 1 would get number of columns, but we don't need that.
         public int Row; // Current row of interest
 
         public SheetAccessor(string fileName, string sheetName) {
             // Open Excel and fetch the workbook we're interested in
-            App = new Excel.Application();
+            Excel.Application app = new Excel.Application();
             // Stupid Excel requires an absolute path for this
-            string workbookName = Directory.GetCurrentDirectory() + fileName;
-            App.DisplayAlerts = false; // No stupid dialog boxes!
-            Workbook = App.Workbooks.Open(Filename: workbookName, UpdateLinks: 3, ReadOnly: true);
+            string workbookName = Directory.GetCurrentDirectory() + "\\" + fileName;
+            app.DisplayAlerts = false; // No stupid dialog boxes!
+            Excel.Workbook workbook = app.Workbooks.Open(Filename: workbookName, UpdateLinks: 3, ReadOnly: true);
 
             // Just get the single sheet we want; the one labeled "stories"
-            Sheet = Workbook.Worksheets[sheetName];
+            Excel.Worksheet sheet = workbook.Worksheets[sheetName];
 
-            SheetData = Sheet.UsedRange.Value2;
-            Sheet = null;
-            if (Workbook != null) {
-                Workbook.Close();
-                Marshal.FinalReleaseComObject(Workbook);
+            // Copy the whole sheet at once into an array of objects. This is about 1000 times faster than iterating.
+            SheetData = sheet.UsedRange.Value2;
+
+            // Now carefully shut down all the COM crap we just created.
+            sheet = null;
+            if (workbook != null) {
+                workbook.Close(SaveChanges: false);
+                Marshal.FinalReleaseComObject(workbook);
             }
-            Workbook = null;
-            if (App != null) {
-                App.Quit();
-                Marshal.FinalReleaseComObject(App);
-                App = null;
+            workbook = null;
+            if (app != null) {
+                app.Quit();
+                Marshal.FinalReleaseComObject(app);
+                app = null;
             }
+
+            // Not sure why we have to do this twice, but once definitely doesn't work.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             GC.Collect();
             GC.WaitForPendingFinalizers();
         }
 
-        // No reason to compute this more than once.
+        // No reason to compute this more than once. It's always 65.
         int ValueOfA = Convert.ToInt32('A');
+
         // Extract a single value from the current row
         public string GetCell(string col) {
             int colIndex = Convert.ToInt32(col[0]) - ValueOfA;
@@ -64,7 +69,8 @@ namespace ValidateBlog {
                 return null;
             }
             if (val.GetType() == typeof(string)) {
-                return (string)val;
+                string s = (string)val;
+                return s.Length > 0 ? s : null;
             }
             if (val.GetType() == typeof(double)) {
                 return Convert.ToString(val);
@@ -74,36 +80,7 @@ namespace ValidateBlog {
             }
             return null;
         }
-        public T GetTypedCell<T>(string col) {
-            return (T)((Excel.Range)Sheet.Cells[Row, col]).Value2;
-        }
-
-        // Try to dispose of all the COM crap the way you're meant to.
-
-        private bool isDisposed = false;
-        public void Dispose() { Dispose(true); GC.SuppressFinalize(this); }
-        protected virtual void Dispose(bool disposing) {
-            if (!isDisposed) {
-                if (disposing) {
-                    Sheet = null;
-                    if (Workbook != null) {
-                        Workbook.Close();
-                        Marshal.FinalReleaseComObject(Workbook);
-                    }
-                    Workbook = null;
-                    if (App != null) {
-                        App.Quit();
-                        Marshal.FinalReleaseComObject(App);
-                        App = null;
-                    }
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                }
-            }
-            isDisposed = true;
-        }
     }
-
 
     // Holds the record for a single story
     class SpreadsheetRecord {
@@ -133,7 +110,7 @@ namespace ValidateBlog {
         string Tone;
         string[] Keywords;
         string Protagonist;
-        string BlogTitle;
+        string _BlogTitle;
         public string[] BlogLabels;
         string PermaLink;
         string Body; // total HTML text of review
@@ -144,6 +121,7 @@ namespace ValidateBlog {
         public string Title { get { return _Title; } }
         public Uri BloggerLink {get {return RSRLink;} }
         public bool Reprint { get { return _Reprint; } }
+        public string BlogTitle => _BlogTitle; 
 
         public SpreadsheetRecord(SheetAccessor sheet) {
             string s;
@@ -163,7 +141,7 @@ namespace ValidateBlog {
             Magazine = sheet.GetCell("I");
             Issue = sheet.GetCell("J");
             s = sheet.GetCell("K");
-            if (s != null) {
+            if (s != null && s != "0") {
                 IssueLink = new Uri(s);
             }
             MagIssue = sheet.GetCell("L");
@@ -214,7 +192,7 @@ namespace ValidateBlog {
                     Protagonist = sa[1];
                 }
             }
-            BlogTitle = sheet.GetCell("AE");
+            _BlogTitle = sheet.GetCell("AE");
             s = sheet.GetCell("AF");
             if (s != null) {
                 BlogLabels = s.Split(',');

@@ -90,6 +90,7 @@ public class Syndicator {
                         ++_Errors;
                         break;
                     }
+                    string relationship = link.RelationshipType;
                 }
             }
 
@@ -330,9 +331,6 @@ public class Syndicator {
                     ++_Errors;
                 }
             }
-
-            TextSyndicationContent content = (TextSyndicationContent)item.Content;
-
         }
         if (verbose) {
             Console.WriteLine("Templates:\t{0}", templates);
